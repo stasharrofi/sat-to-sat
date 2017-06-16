@@ -1,0 +1,25 @@
+================================================================================
+DIRECTORY OVERVIEW:
+
+/               Main file, Dimacs and STS Parser
+mtl/            Mini Template Library
+utils/          Generic helper code (I/O, Parsing, CPU-time, etc)
+core/           A core version of the solver
+propagators/    Different propagator implementations
+maxsat/         OpenWBO MaxSAT functionalities
+simp/           An extended solver with simplification capabilities
+README
+LICENSE
+
+================================================================================
+BUILDING: (release version: without assertions, statically linked, etc)
+
+make rs
+cp sat-to-sat_static <install-dir>/sat-to-sat
+
+================================================================================
+EXAMPLES:
+
+Run graphsat with same heuristics as version 2.0:
+
+> sat-to-sat <cnf-file> -no-luby -rinc=1.5 -phase-saving=0 -rnd-freq=0.02
