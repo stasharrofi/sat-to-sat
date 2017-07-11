@@ -40,10 +40,22 @@ void printStats(Solver& solver)
 {
     double cpu_time = cpuTime();
     double mem_used = memUsedPeak();
-    printf("c restarts              : %" PRIu64"\n", solver.starts);
+    printf("c restarts              : %" PRIu64 " (%" PRIu64 " conflicts in avg)\n", solver.starts,(solver.starts>0 ?solver.conflicts/solver.starts : 0));
+#ifdef GLUCOSE3
+    printf("c blocked restarts      : %" PRIu64 " (multiple: %" PRIu64 ") \n", solver.nbstopsrestarts,solver.nbstopsrestartssame);
+    printf("c last block at restart : %" PRIu64 "\n",solver.lastblockatrestart);
+    printf("c nb ReduceDB           : %" PRIu64 "\n", solver.nbReduceDB);
+    printf("c nb removed Clauses    : %" PRIu64 "\n", solver.nbRemovedClauses);
+    printf("c nb learnts DL2        : %" PRIu64 "\n", solver.nbDL2);
+    printf("c nb learnts size 2     : %" PRIu64 "\n", solver.nbBin);
+    printf("c nb learnts size 1     : %" PRIu64 "\n", solver.nbUn);
+#endif
     printf("c conflicts             : %-12" PRIu64"   (%.0f /sec)\n", solver.conflicts   , solver.conflicts   /cpu_time);
     printf("c decisions             : %-12" PRIu64"   (%4.2f %% random) (%.0f /sec)\n", solver.decisions, (float)solver.rnd_decisions*100 / (float)solver.decisions, solver.decisions   /cpu_time);
     printf("c propagations          : %-12" PRIu64"   (%.0f /sec)\n", solver.propagations, solver.propagations/cpu_time);
+#ifdef GLUCOSE3
+    printf("c nb reduced Clauses    : %" PRIu64 "\n",solver.nbReducedClauses);
+#endif
     printf("c conflict literals     : %-12" PRIu64"   (%4.2f %% deleted)\n", solver.tot_literals, (solver.max_literals - solver.tot_literals)*100 / (double)solver.max_literals);
     if (mem_used != 0) printf("c Memory used           : %.2f MB\n", mem_used);
     printf("c CPU time              : %g s\n", cpu_time);
@@ -72,11 +84,15 @@ int main(int argc, char** argv)
 {
 	try
 	{
-		setUsageHelp("USAGE: %s [options] <input-file> <result-output-file>\n\n  where input may be either in plain or gzipped DIMACS.\n");
+		setUsageHelp("c USAGE: %s [options] <input-file> <result-output-file>\nc \nc   where input may be either in plain or gzipped DIMACS.\n");
 
 		// Extra options:
 		//
 		IntOption    verb   ("MAIN", "verb",   "Verbosity level (0=silent, 1=some, 2=more).", 1, IntRange(0, 2));
+#ifdef GLUCOSE3
+		BoolOption   mod    ("MAIN", "model",  "show model.", false);
+		IntOption    vv     ("MAIN", "vv",     "Verbosity every vv conflicts", 10000, IntRange(1,INT32_MAX));
+#endif
 		IntOption    cpu_lim("MAIN", "cpu-lim","Limit on CPU time allowed in seconds.\n", INT32_MAX, IntRange(0, INT32_MAX));
 		IntOption    mem_lim("MAIN", "mem-lim","Limit on memory usage in megabytes.\n", INT32_MAX, IntRange(0, INT32_MAX));
 		BoolOption   drup   ("MAIN", "drup",   "Generate DRUP UNSAT proof.", false);
@@ -139,8 +155,8 @@ int main(int argc, char** argv)
 
 		if (mxsolver->getVerbosity() > 0)
 		{
-			printf("c ============================[ Problem Statistics ]=============================\n");
-			printf("c |                                                                             |\n");
+			printf("c ========================================[ Problem Statistics ]===========================================\n");
+			printf("c |                                                                                                       |\n");
 		}
 
 		if (opt_input_format == 0)
@@ -148,25 +164,25 @@ int main(int argc, char** argv)
 		else
 			parse_STS(in, *mxsolver);
 		gzclose(in);
-		FILE* res = (argc >= 3) ? fopen(argv[2], "wb") : stdout;
+		FILE* res = (argc >= 3) ? fopen(argv[argc - 1], "wb") : stdout;
 
 		if (mxsolver->getVerbosity() > 0)
 		{
-			printf("c |  Number of variables:    %12d                                       |\n", mxsolver->nVars());
+			printf("c |  Number of variables:  %12d                                                                   |\n", mxsolver->nVars());
 			if (mxsolver->hasMinimization())
 			{
-				printf("c |  Number of hard clauses: %12d                                       |\n", mxsolver->nHard());
-				printf("c |  Number of soft clauses: %12d                                       |\n", mxsolver->nSoft());
+				printf("c |  Number of hard clauses: %12d                                                                 |\n", mxsolver->nHard());
+				printf("c |  Number of soft clauses: %12d                                                                 |\n", mxsolver->nSoft());
 			}
 			else
-				printf("c |  Number of clauses:      %12d                                       |\n", mxsolver->nHard());
+				printf("c |  Number of clauses:    %12d                                                                   |\n", mxsolver->nHard());
 		}
 
 		double parsed_time = cpuTime();
 		if (mxsolver->getVerbosity() > 0)
 		{
-			printf("c |  Parse time:           %12.2f s                                       |\n", parsed_time - initial_time);
-			printf("c |                                                                             |\n");
+			printf("c |  Parse time:           %12.2f s                                                                 |\n", parsed_time - initial_time);
+			printf("c |                                                                                                       |\n");
 		}
 
 		int ret_value;
@@ -180,12 +196,21 @@ int main(int argc, char** argv)
 		{
 			Solver *S = mxsolver->getPrototypeSolver();
 			S->verbosity = mxsolver->getVerbosity();
+#ifdef GLUCOSE3
+			S->verbEveryConflicts = vv;
+			S->showModel = mod;
+#endif
 
 			if (!S->simplify())
 			{
 				if (mxsolver->getVerbosity() > 0)
-					fprintf(res, "c Solved by unit propagation!");
-				fprintf(res, "s UNSAT\n");
+				{
+					printf("c =========================================================================================================\n");
+					printf("c Solved by unit propagation\n");
+					printStats(*S);
+					printf("\n");
+				}
+				fprintf(res, "s UNSATISFIABLE\n");
 				ret_value = _UNSATISFIABLE_;
 			}
 			else
@@ -206,7 +231,7 @@ int main(int argc, char** argv)
 					if (ret == l_True)
 					{
 						currentModelCount++;
-						fprintf(res, "s SAT\n");
+						fprintf(res, "s SATISFIABLE\n");
 						S->printModel(res);
 						if (currentModelCount == expectedModelCount)
 							break;
@@ -220,14 +245,14 @@ int main(int argc, char** argv)
 					}
 					else if (ret == l_False)
 					{
-						fprintf(res, "s UNSAT\n");
+						fprintf(res, "s UNSATISFIABLE\n");
 						if (currentModelCount > 0)
 							ret = l_True;
 						break;
 					}
 					else
 					{
-						fprintf(res, "s INDET\n");
+						fprintf(res, "s INDETERMINATE\n");
 						break;
 					}
 				}

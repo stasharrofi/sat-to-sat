@@ -30,6 +30,8 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #include "mtl/Map.h"
 #include "mtl/Alloc.h"
 
+#define GLUCOSE3
+
 namespace Minisat {
 
 //=================================================================================================
@@ -126,11 +128,18 @@ class Clause {
         unsigned learnt    : 1;
         unsigned has_extra : 1;
         unsigned reloced   : 1;
-        unsigned lbd       : 26;
+        int      lbd       : 26;
         unsigned removable : 1;
         unsigned size      : 32;
     } header;
-    union { Lit lit; float act; uint32_t abs; uint32_t touched; CRef rel; } data[0];
+    union {
+			Lit lit;
+			float act;
+			uint32_t abs;
+#ifndef GLUCOSE3
+			uint32_t touched;
+#endif
+			CRef rel; } data[0];
 
     friend class ClauseAllocator;
 
@@ -139,7 +148,11 @@ class Clause {
     Clause(const V& ps, bool use_extra, bool learnt) {
         header.mark      = 0;
         header.learnt    = learnt;
+#ifdef GLUCOSE3
+        header.has_extra = use_extra;
+#else
         header.has_extra = learnt | use_extra;
+#endif
         header.reloced   = 0;
         header.size      = ps.size();
         header.lbd       = 0;
@@ -150,8 +163,10 @@ class Clause {
 
         if (header.has_extra){
             if (header.learnt){
-                data[header.size].act = 0; 
+                data[header.size].act = 0;
+#ifndef GLUCOSE3
                 data[header.size+1].touched = 0;
+#endif
             }else 
                 calcAbstraction(); }
     }
@@ -189,7 +204,9 @@ public:
     Lit          operator [] (int i) const   { return data[i].lit; }
     operator const Lit* (void) const         { return (Lit*)data; }
 
+#ifndef GLUCOSE3
     uint32_t&    touched     ()              { assert(header.has_extra && header.learnt); return data[header.size+1].touched; }
+#endif
     float&       activity    ()              { assert(header.has_extra); return data[header.size].act; }
     uint32_t     abstraction () const        { assert(header.has_extra); return data[header.size].abs; }
 
@@ -222,7 +239,11 @@ class ClauseAllocator : public RegionAllocator<uint32_t>
     {
         assert(sizeof(Lit)      == sizeof(uint32_t));
         assert(sizeof(float)    == sizeof(uint32_t));
+#ifdef GLUCOSE3
+        int extras = (int) (learnt | extra_clause_field);
+#else
         int extras = learnt ? 2 : (int)extra_clause_field;
+#endif
 
         CRef cid = RegionAllocator<uint32_t>::alloc(clauseWord32Size(ps.size(), extras));
         new (lea(cid)) Clause(ps, extra_clause_field, learnt);
@@ -240,7 +261,11 @@ class ClauseAllocator : public RegionAllocator<uint32_t>
     void free(CRef cid)
     {
         Clause& c = operator[](cid);
+#ifdef GLUCOSE3
+        int extras = (int)c.has_extra();
+#else
         int extras = c.learnt() ? 2 : (int)c.has_extra();
+#endif
         RegionAllocator<uint32_t>::free(clauseWord32Size(c.size(), extras));
     }
 
@@ -257,7 +282,9 @@ class ClauseAllocator : public RegionAllocator<uint32_t>
         // (This could be cleaned-up. Generalize Clause-constructor to be applicable here instead?)
         to[cr].mark(c.mark());
         if (to[cr].learnt()){
+#ifndef GLUCOSE3
             to[cr].touched() = c.touched();
+#endif
             to[cr].activity() = c.activity();
             to[cr].set_lbd(c.lbd());
             to[cr].removable(c.removable());

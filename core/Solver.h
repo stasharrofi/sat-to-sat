@@ -21,19 +21,24 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #ifndef Minisat_Solver_h
 #define Minisat_Solver_h
 
+#include <vector>
+#include <string>
+#include <unordered_map>
+
 #include "mtl/Vec.h"
 #include "mtl/Heap.h"
 #include "mtl/Alg.h"
 #include "utils/Options.h"
 #include "core/SolverTypes.h"
-#include <vector>
-#include <string>
-#include <unordered_map>
+#ifdef GLUCOSE3
+#include "core/BoundedQueue.h"
+#include "core/Constants.h"
+#endif
 
 #include <deque>
 
+#ifndef GLUCOSE3
 #define ANTI_EXPLORATION
-#define BIN_DRUP
 
 #define GLUCOSE23
 //#define INT_QUEUE_AVG
@@ -43,11 +48,14 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
   #define INT_QUEUE_AVG
   #define LOOSE_PROP_STAT
 #endif
+#endif
 
+#ifndef GLUCOSE3
 // Don't change the actual numbers.
 #define LOCAL 0
 #define TIER2 2
 #define CORE  3
+#endif
 
 #define VAR_PRIORITY_ENABLED
 #define VAR_FACTOR_ENABLED
@@ -62,6 +70,7 @@ namespace Minisat {
 // Solver -- the main class:
 
 class Solver {
+#ifndef GLUCOSE3
 private:
     template<typename T>
     class MyQueue {
@@ -87,6 +96,7 @@ private:
             if (ptr == max_sz) ptr = 0;
         }
     };
+#endif
 
 		friend class ::Propagator;
 public:
@@ -126,6 +136,11 @@ public:
     void    toDimacs     (const char *file, const vec<Lit>& assumps);
     void    toDimacs     (FILE* f, Clause& c, vec<Var>& map, Var& max);
 
+#ifdef GLUCOSE3
+    void printLit(Lit l);
+    void printClause(CRef c);
+    void printInitialClause(CRef c);
+#endif
     // Convenience versions of 'toDimacs()':
     void    toDimacs     (const char* file);
     void    toDimacs     (const char* file, Lit p);
@@ -179,17 +194,38 @@ public:
 
     // Mode of operation:
     //
-    FILE*     drup_file;
     int       verbosity;
+#ifdef GLUCOSE3
+    int       verbEveryConflicts;
+    int       showModel;
+    // Constants For restarts
+    double    K;
+    double    R;
+    double    sizeLBDQueue;
+    double    sizeTrailQueue;
+
+    // Constants for reduce DB
+    int firstReduceDB;
+    int incReduceDB;
+    int specialIncReduceDB;
+    int lbLBDFrozenClause;
+
+    // Constant for reducing clause
+    int lbSizeMinimizingClause;
+    int lbLBDMinimizingClause;
+#else
     double    step_size;
     double    step_size_dec;
     double    min_step_size;
     int       timer;
+#endif
     double    var_decay;
     double    clause_decay;
     double    random_var_freq;
     double    random_seed;
+#ifndef GLUCOSE3
     bool      VSIDS;
+#endif
     bool      heavy_propagation;
     bool      lazy_propagation;
     bool      early_propagation;
@@ -201,6 +237,7 @@ public:
     bool      rnd_init_act;       // Initialize variable activities with a small random value.
     double    garbage_frac;       // The fraction of wasted memory allowed before a garbage collection is triggered.
 
+#ifndef GLUCOSE3
     int       restart_first;      // The initial restart limit.                                                                (default 100)
     double    restart_inc;        // The factor with which the restart limit is multiplied in each restart.                    (default 1.5)
     double    learntsize_factor;  // The intitial limit for learnt clauses is a factor of the original clauses.                (default 1 / 3)
@@ -208,17 +245,26 @@ public:
 
     int       learntsize_adjust_start_confl;
     double    learntsize_adjust_inc;
+#endif
 
     // Statistics: (read-only member variable)
     //
-    uint64_t solves, starts, decisions, rnd_decisions, propagations, conflicts, conflicts_VSIDS;
+    uint64_t solves, starts, decisions, rnd_decisions, propagations, conflicts;
+#ifdef GLUCOSE3
+    uint64_t nbRemovedClauses, nbReducedClauses, nbDL2, nbBin, nbUn, nbReduceDB, conflictsRestarts, nbstopsrestarts, nbstopsrestartssame, lastblockatrestart;
+    uint64_t curRestart;
+#else
+    uint64_t conflicts_VSIDS;
+#endif
     uint64_t dec_vars, clauses_literals, learnts_literals, max_literals, tot_literals;
 
+#ifndef GLUCOSE3
     vec<uint32_t> picked;
     vec<uint32_t> conflicted;
     vec<uint32_t> almost_conflicted;
 #ifdef ANTI_EXPLORATION
     vec<uint32_t> canceled;
+#endif
 #endif
 
 		// Propagator management:
@@ -247,7 +293,6 @@ public:
 		void printModel(FILE *out);
 
 protected:
-
     // Helper structures:
     //
     struct VarData { CRef reason; int level; };
@@ -295,14 +340,22 @@ protected:
 
     // Solver state:
     //
+#ifdef GLUCOSE3
+    int lastIndexRed;
+#endif
     bool                ok;               // If FALSE, the constraints are already unsatisfiable. No part of the solver state may be used!
     vec<CRef>           clauses;          // List of problem clauses.
+#ifndef GLUCOSE3
     vec<CRef>           learnts_core,     // List of learnt clauses.
-                        learnts_tier2,
-                        learnts_local;
+                        learnts_tier2;
+#endif
+    vec<CRef>           learnts_local;    // List of learnt clauses.
+
     double              cla_inc;          // Amount to bump next clause with.
-    vec<double>         activity_CHB,     // A heuristic measurement of the activity of a variable.
-                        activity_VSIDS;
+#ifndef GLUCOSE3
+    vec<double>         activity_CHB;     // A heuristic measurement of the activity of a variable.
+#endif
+    vec<double>         activity_VSIDS;   // A heuristic measurement of the activity of a variable.
 #ifdef VAR_PRIORITY_ENABLED
     vec<int>            priority;         // A way to explicitly prioritize some variables over others.
 #endif
@@ -318,23 +371,42 @@ protected:
 		vec<lbool>          userDefPolarity;  // Shahab: The user-defined polarity of each variable.
 		vec<char>           decision;         // Declares if a variable is eligible for selection in the decision heuristic.
     vec<Lit>            trail;            // Assignment stack; stores all assigments made in the order they were made.
+#ifdef GLUCOSE3
+    vec<int>            nbpos;
+#endif
     vec<int>            trail_lim;        // Separator indices for different decision levels in 'trail'.
     vec<VarData>        vardata;          // Stores reason and level for each variable.
     int                 qhead;            // Head of queue (as index into the trail -- no more explicit propagation queue in MiniSat).
     int                 simpDB_assigns;   // Number of top-level assignments since last execution of 'simplify()'.
     int64_t             simpDB_props;     // Remaining number of propagations that must be made before next execution of 'simplify()'.
 //    vec<Lit>            assumptions;      // Current set of assumptions provided to solve by the user.
-    Heap<VarOrderLt>    order_heap_CHB,   // A priority queue of variables ordered with respect to the variable activity.
-                        order_heap_VSIDS;
+#ifndef GLUCOSE3
+    Heap<VarOrderLt>    order_heap_CHB;   // A priority queue of variables ordered with respect to the variable activity.
+#endif
+    Heap<VarOrderLt>    order_heap_VSIDS; // A priority queue of variables ordered with respect to the variable activity.
     double              progress_estimate;// Set by 'search()'.
     bool                remove_satisfied; // Indicates whether possibly inefficient linear scan for satisfied clauses should be performed in 'simplify'.
+#ifdef GLUCOSE3
+    vec<unsigned int> permDiff;      // permDiff[var] contains the current conflict number... Used to count the number of  LBD
+    
+#ifdef UPDATEVARACTIVITY
+    // UPDATEVARACTIVITY trick (see competition'09 companion paper)
+    vec<Lit> lastDecisionLevel; 
+#endif
 
+    uint64_t nbclausesbeforereduce;            // To know when it is time to reduce clause database
+    
+    bqueue<unsigned int> trailQueue,lbdQueue; // Bounded queues for restarts.
+    float sumLBD; // used to compute the global average of LBD. Restarts...
+    int sumAssumptions;
+#else
     int                 core_lbd_cut;
     float               global_lbd_sum;
     MyQueue<int>        lbd_queue;        // For computing moving averages of recent LBD values.
 
     uint64_t            next_T2_reduce,
                         next_L_reduce;
+#endif
 
     ClauseAllocator     ca;
 
@@ -345,10 +417,14 @@ protected:
     vec<Lit>            analyze_stack;
     vec<Lit>            analyze_toclear;
     vec<Lit>            add_tmp;
+#ifdef GLUCOSE3
+    unsigned int  MYFLAG;
+#else
     vec<Lit>            add_oc;
 
     vec<uint64_t>       seen2;    // Mostly for efficient LBD computation. 'seen2[i]' will indicate if decision level or variable 'i' has been seen.
     uint64_t            counter;  // Simple counter for marking purpose with 'seen2'.
+#endif
 
     double              max_learnts;
     double              learntsize_adjust_confl;
@@ -377,14 +453,24 @@ protected:
     void     analyze          (CRef confl, vec<Lit>& out_learnt, int& out_btlevel, int& out_lbd);    // (bt = backtrack)
     void     analyzeFinal     (Lit p, vec<Lit>& out_conflict);                         // COULD THIS BE IMPLEMENTED BY THE ORDINARIY "analyze" BY SOME REASONABLE GENERALIZATION?
     bool     litRedundant     (Lit p, uint32_t abstract_levels);                       // (helper method for 'analyze()')
+#ifdef GLUCOSE3
+    lbool    search           (const vec<Lit> &assumptions, int nof_conflicts);
+#else
     lbool    search           (const vec<Lit> &assumptions, int &nof_conflicts);                                     // Search for a given number of conflicts.
+#endif
     lbool    solve_           (const vec<Lit> &assumptions);                                                      // Main solve method (assumptions given in 'assumptions').
     void     reduceDB         ();                                                      // Reduce the set of learnt clauses.
+#ifndef GLUCOSE3
     void     reduceDB_Tier2   ();
+#endif
     void     removeSatisfied  (vec<CRef>& cs);                                         // Shrink 'cs' to contain only non-satisfied clauses.
+#ifndef GLUCOSE3
     void     safeRemoveSatisfied(vec<CRef>& cs, unsigned valid_mark);
+#endif
     void     rebuildOrderHeap ();
+#ifndef GLUCOSE3
     bool     binResMinimize   (vec<Lit>& out_learnt);                                  // Further learnt clause minimization by binary resolution.
+#endif
 
     // Maintaining Variable/Clause activity:
     //
@@ -403,6 +489,12 @@ protected:
     bool     locked           (const Clause& c) const; // Returns TRUE if a clause is a reason for some implication in the current state.
     bool     satisfied        (const Clause& c) const; // Returns TRUE if a clause is satisfied in the current state.
 
+#ifdef GLUCOSE3
+    int computeLBD(const vec<Lit> & lits,int end=-1);
+    int computeLBD(const Clause &c);
+    void minimisationWithBinaryResolution(vec<Lit> &out_learnt);
+#endif
+
     void     relocAll         (ClauseAllocator& to);
 
     // Misc:
@@ -414,6 +506,7 @@ protected:
     double   progressEstimate ()      const; // DELETE THIS ?? IT'S NOT VERY USEFUL ...
     bool     withinBudget     ()      const;
 
+#ifndef GLUCOSE3
     template<class V> int computeLBD(const V& c) {
         int lbd = 0;
 
@@ -425,42 +518,6 @@ protected:
                 lbd++; } }
 
         return lbd;
-    }
-
-#ifdef BIN_DRUP
-    static int buf_len;
-    static unsigned char drup_buf[];
-    static unsigned char* buf_ptr;
-
-    static inline void byteDRUP(Lit l){
-        unsigned int u = 2 * (var(l) + 1) + sign(l);
-        do{
-            *buf_ptr++ = u & 0x7f | 0x80; buf_len++;
-            u = u >> 7;
-        }while (u);
-        *(buf_ptr - 1) &= 0x7f; // End marker of this unsigned number.
-    }
-
-    template<class V>
-    static inline void binDRUP(unsigned char op, const V& c, FILE* drup_file){
-        assert(op == 'a' || op == 'd');
-        *buf_ptr++ = op; buf_len++;
-        for (int i = 0; i < c.size(); i++) byteDRUP(c[i]);
-        *buf_ptr++ = 0; buf_len++;
-        if (buf_len > 1048576) binDRUP_flush(drup_file);
-    }
-
-    static inline void binDRUP_strengthen(const Clause& c, Lit l, FILE* drup_file){
-        *buf_ptr++ = 'a'; buf_len++;
-        for (int i = 0; i < c.size(); i++)
-            if (c[i] != l) byteDRUP(c[i]);
-        *buf_ptr++ = 0; buf_len++;
-        if (buf_len > 1048576) binDRUP_flush(drup_file);
-    }
-
-    static inline void binDRUP_flush(FILE* drup_file){
-        fwrite_unlocked(drup_buf, sizeof(unsigned char), buf_len, drup_file);
-        buf_ptr = drup_buf; buf_len = 0;
     }
 #endif
 
@@ -493,18 +550,21 @@ inline CRef Solver::reason(Var x) const { return vardata[x].reason; }
 inline int  Solver::level (Var x) const { return vardata[x].level; }
 
 inline void Solver::insertVarOrder(Var x) {
+#ifdef GLUCOSE3
+    Heap<VarOrderLt>& order_heap = order_heap_VSIDS;
+#else
     Heap<VarOrderLt>& order_heap = VSIDS ? order_heap_VSIDS : order_heap_CHB;
+#endif
     if (!order_heap.inHeap(x) && decision[x]) order_heap.insert(x); }
 
-inline void Solver::varDecayActivity() {
-    var_inc *= (1 / var_decay); }
+inline void Solver::varDecayActivity() { var_inc *= (1 / var_decay); }
 inline void Solver::varBumpActivity(Var v) { varBumpActivity(v, 1.0); }
 inline void Solver::varBumpActivity(Var v, double mult) { varBumpActivity(v, mult, var_inc); }
 inline void Solver::varBumpActivity(Var v, double mult, double var_inc) {
 #ifdef VAR_FACTOR_ENABLED
     mult *= factors[v];
 #endif
-    if ( (activity_VSIDS[v] += var_inc * mult) > 1e100 ) {
+    if ((activity_VSIDS[v] += var_inc * mult) > 1e100 ) {
         // Rescale:
         for (int i = 0; i < nVars(); i++)
             activity_VSIDS[i] *= 1e-100;
@@ -547,7 +607,11 @@ inline lbool    Solver::modelValue    (Var x) const   { return model[x]; }
 inline lbool    Solver::modelValue    (Lit p) const   { return model[var(p)] ^ sign(p); }
 inline int      Solver::nAssigns      ()      const   { return trail.size(); }
 inline int      Solver::nClauses      ()      const   { return clauses.size(); }
+#ifdef GLUCOSE3
+inline int      Solver::nLearnts      ()      const   { return learnts_local.size(); }
+#else
 inline int      Solver::nLearnts      ()      const   { return learnts_core.size() + learnts_tier2.size() + learnts_local.size(); }
+#endif
 inline int      Solver::nVars         ()      const   { return vardata.size(); }
 inline int      Solver::nFreeVars     ()      const   { return (int)dec_vars - (trail_lim.size() == 0 ? trail.size() : trail_lim[0]); }
 inline int      Solver::nBoundVars    ()      const   { return (trail_lim.size() == 0) ? trail.size() : trail_lim[0]; }
@@ -560,9 +624,13 @@ inline void     Solver::setDecisionVar(Var v, bool b)
     else if (!b &&  decision[v]) dec_vars--;
 
     decision[v] = b;
+#ifdef GLUCOSE3
+    insertVarOrder(v);
+#else
     if (b && !order_heap_CHB.inHeap(v)){
         order_heap_CHB.insert(v);
         order_heap_VSIDS.insert(v); }
+#endif
 }
 inline void     Solver::setConfBudget(int64_t x){ conflict_budget    = conflicts    + x; }
 inline void     Solver::setPropBudget(int64_t x){ propagation_budget = propagations + x; }
@@ -596,6 +664,30 @@ inline void     Solver::addPropagator(Propagator *p) { propagators.push_back(p);
 //=================================================================================================
 // Debug etc:
 
+#ifdef GLUCOSE3
+inline void Solver::printLit(Lit l)
+{
+	printf("%s%d:%c", sign(l) ? "-" : "", var(l)+1, value(l) == l_True ? '1' : (value(l) == l_False ? '0' : 'X'));
+}
+
+inline void Solver::printClause(CRef cr)
+{
+	Clause &c = ca[cr];
+	for (int i = 0; i < c.size(); i++){
+		printLit(c[i]);
+		printf(" ");
+	}
+}
+
+inline void Solver::printInitialClause(CRef cr)
+{
+	Clause &c = ca[cr];
+	for (int i = 0; i < c.size(); i++){
+		printLit(c[i]);
+		printf(" ");
+	}
+}
+#endif
 
 //=================================================================================================
 

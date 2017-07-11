@@ -278,6 +278,7 @@ static void parse_STS_main(B& in, MaxSAT& S)
 								printf("PARSE ERROR! Maximum tries for conflict minimization should be greater than zero.\n"), exit(3);
 							currentSolver->min_conflict_tries = max_confl_try;
 						}
+#ifndef GLUCOSE3
 						else if (eagerMatch(in, "in-step-size="))
 						{
 							double min_step_size = parseDouble(in);
@@ -285,6 +286,7 @@ static void parse_STS_main(B& in, MaxSAT& S)
 								printf("PARSE ERROR! Minimum step size value should be in the range 0 to 1, exclusive.\n"), exit(3);
 							currentSolver->min_step_size = min_step_size;
 						}
+#endif
 					}
 					else if (eagerMatch(in, "phase-saving="))
 					{
@@ -297,11 +299,14 @@ static void parse_STS_main(B& in, MaxSAT& S)
 					{
 						if (eagerMatch(in, "first="))
 						{
+#ifndef GLUCOSE3
 							int restart_first = parseInt(in);
 							if (restart_first < 1)
 								printf("PARSE ERROR! First restart value should be greater than 1.\n"), exit(3);
 							currentSolver->restart_first = restart_first;
+#endif
 						}
+#ifndef GLUCOSE3
 						else if (eagerMatch(in, "inc="))
 						{
 							double restart_inc = parseDouble(in);
@@ -309,6 +314,7 @@ static void parse_STS_main(B& in, MaxSAT& S)
 								printf("PARSE ERROR! Restart inc value should be greater than 1.\n"), exit(3);
 							currentSolver->restart_inc = restart_inc;
 						}
+#endif
 						else if (eagerMatch(in, "nd-"))
 						{
 							if (eagerMatch(in, "freq="))
@@ -331,6 +337,7 @@ static void parse_STS_main(B& in, MaxSAT& S)
 							}
 						}
 					}
+#ifndef GLUCOSE3
 					else if (eagerMatch(in, "step-size"))
 					{
 						if (eagerMatch(in, "="))
@@ -348,6 +355,7 @@ static void parse_STS_main(B& in, MaxSAT& S)
 							currentSolver->step_size_dec = step_size_dec;
 						}
 					}
+#endif
 					else if (eagerMatch(in, "var-decay="))
 					{
 						double var_decay = parseDouble(in);

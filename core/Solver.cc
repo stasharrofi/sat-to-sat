@@ -24,6 +24,10 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 
 #include "mtl/Sort.h"
 #include "core/Solver.h"
+#ifdef GLUCOSE3
+#include "core/Constants.h"
+#include "utils/System.h"
+#endif
 #include "propagators/Propagator.h"
 
 using namespace Minisat;
@@ -43,19 +47,36 @@ unsigned char* Solver::buf_ptr = drup_buf;
 static const char* _cat = "CORE";
 static const char* _model = "Model";
 static const char* _propagators = "Propagators";
+#ifdef GLUCOSE3
+static const char* _core_glucose3 = "CORE -- Glucose 3.0";
 
-static DoubleOption  opt_step_size         (_cat, "step-size",   "Initial step size",                             0.40,     DoubleRange(0, false, 1, false));
-static DoubleOption  opt_step_size_dec     (_cat, "step-size-dec","Step size decrement",                          0.000001, DoubleRange(0, false, 1, false));
-static DoubleOption  opt_min_step_size     (_cat, "min-step-size","Minimal step size",                            0.06,     DoubleRange(0, false, 1, false));
-static DoubleOption  opt_var_decay         (_cat, "var-decay",   "The variable activity decay factor",            0.80,     DoubleRange(0, false, 1, false));
+static DoubleOption  opt_K                  (_core_glucose3, "K",           "The constant used to force restart",            0.8,     DoubleRange(0, false, 1, false));           
+static DoubleOption  opt_R                  (_core_glucose3, "R",           "The constant used to block restart",            1.4,     DoubleRange(1, false, 5, false));           
+static IntOption     opt_size_lbd_queue     (_core_glucose3, "szLBDQueue",      "The size of moving average for LBD (restarts)", 50, IntRange(10, INT32_MAX));
+static IntOption     opt_size_trail_queue   (_core_glucose3, "szTrailQueue",      "The size of moving average for trail (block restarts)", 5000, IntRange(10, INT32_MAX));
+static IntOption     opt_first_reduce_db    (_core_glucose3, "firstReduceDB",      "The number of conflicts before the first reduce DB", 2000, IntRange(0, INT32_MAX));
+static IntOption     opt_inc_reduce_db      (_core_glucose3, "incReduceDB",      "Increment for reduce DB", 300, IntRange(0, INT32_MAX));
+static IntOption     opt_spec_inc_reduce_db (_core_glucose3, "specialIncReduceDB",      "Special increment for reduce DB", 1000, IntRange(0, INT32_MAX));
+static IntOption     opt_lb_lbd_frozen_clause(_core_glucose3,"minLBDFrozenClause",        "Protect clauses if their LBD decrease and is lower than (for one turn)", 30, IntRange(0, INT32_MAX));
+static IntOption     opt_lb_size_minimzing_clause(_core_glucose3, "minSizeMinimizingClause",      "The min size required to minimize clause", 30, IntRange(3, INT32_MAX));
+static IntOption     opt_lb_lbd_minimzing_clause(_core_glucose3, "minLBDMinimizingClause",      "The min LBD required to minimize clause", 6, IntRange(3, INT32_MAX));
+#else
+static DoubleOption  opt_step_size          (_cat, "step-size",   "Initial step size",                             0.40,     DoubleRange(0, false, 1, false));
+static DoubleOption  opt_step_size_dec      (_cat, "step-size-dec","Step size decrement",                          0.000001, DoubleRange(0, false, 1, false));
+static DoubleOption  opt_min_step_size      (_cat, "min-step-size","Minimal step size",                            0.06,     DoubleRange(0, false, 1, false));
+#endif
+
+static DoubleOption  opt_var_decay          (_cat, "var-decay",   "The variable activity decay factor",            0.80,     DoubleRange(0, false, 1, false));
 static DoubleOption  opt_clause_decay       (_cat, "cla-decay",   "The clause activity decay factor",              0.999,    DoubleRange(0, false, 1, false));
 static DoubleOption  opt_random_var_freq    (_cat, "rnd-freq",    "The frequency with which the decision heuristic tries to choose a random variable", 0, DoubleRange(0, true, 1, true));
 static DoubleOption  opt_random_seed        (_cat, "rnd-seed",    "Used by the random variable selection",         91648253, DoubleRange(0, false, HUGE_VAL, false));
 static IntOption     opt_ccmin_mode         (_cat, "ccmin-mode",  "Controls conflict clause minimization (0=none, 1=basic, 2=deep)", 2, IntRange(0, 2));
 static IntOption     opt_phase_saving       (_cat, "phase-saving", "Controls the level of phase saving (0=none, 1=limited, 2=full)", 2, IntRange(0, 2));
 static BoolOption    opt_rnd_init_act       (_cat, "rnd-init",    "Randomize the initial activity", false);
+#ifndef GLUCOSE3
 static IntOption     opt_restart_first      (_cat, "rfirst",      "The base restart interval", 100, IntRange(1, INT32_MAX));
 static DoubleOption  opt_restart_inc        (_cat, "rinc",        "Restart interval increase factor", 2, DoubleRange(1, false, HUGE_VAL, false));
+#endif
 static DoubleOption  opt_garbage_frac       (_cat, "gc-frac",     "The fraction of wasted memory allowed before a garbage collection is triggered",  0.20, DoubleRange(0, false, HUGE_VAL, false));
 
 static IntOption     opt_printing_method    (_model, "out-format", "Method to print models (0=SAT, 1=ASP)", 0, IntRange(0, 1));
@@ -74,18 +95,33 @@ Solver::Solver() :
 
     // Parameters (user settable):
     //
-    drup_file        (NULL)
-  , verbosity        (0)
-  , step_size        (opt_step_size)
-  , step_size_dec    (opt_step_size_dec)
-  , min_step_size    (opt_min_step_size)
-  , timer            (5000)
-  , var_decay        (opt_var_decay)
+		verbosity         (0)
+#ifdef GLUCOSE3
+	, showModel         (0)
+	, K                 (opt_K)
+	, R                 (opt_R)
+	, sizeLBDQueue      (opt_size_lbd_queue)
+	, sizeTrailQueue    (opt_size_trail_queue)
+	, firstReduceDB     (opt_first_reduce_db)
+	, incReduceDB       (opt_inc_reduce_db)
+	, specialIncReduceDB(opt_spec_inc_reduce_db)
+	, lbLBDFrozenClause (opt_lb_lbd_frozen_clause)
+	, lbSizeMinimizingClause(opt_lb_size_minimzing_clause)
+	, lbLBDMinimizingClause(opt_lb_lbd_minimzing_clause)
+#else
+	, step_size         (opt_step_size)
+  , step_size_dec     (opt_step_size_dec)
+  , min_step_size     (opt_min_step_size)
+  , timer             (5000)
+#endif
+	, var_decay         (opt_var_decay)
   , clause_decay      (opt_clause_decay)
   , random_var_freq   (opt_random_var_freq)
   , random_seed       (opt_random_seed)
-  , VSIDS            (false)
-  , heavy_propagation (opt_heavy_propagation)
+#ifndef GLUCOSE3
+  , VSIDS             (false)
+#endif
+	, heavy_propagation (opt_heavy_propagation)
   , lazy_propagation  (opt_lazy_propagation)
   , early_propagation (opt_early_propagation)
   , min_conflict_tries(opt_min_conflict_tries)
@@ -94,6 +130,7 @@ Solver::Solver() :
   , rnd_pol           (false)
   , rnd_init_act      (opt_rnd_init_act)
   , garbage_frac      (opt_garbage_frac)
+#ifndef GLUCOSE3
   , restart_first     (opt_restart_first)
   , restart_inc       (opt_restart_inc)
 
@@ -105,10 +142,18 @@ Solver::Solver() :
     //
   , learntsize_adjust_start_confl (100)
   , learntsize_adjust_inc         (1.5)
+#endif
 
     // Statistics: (formerly in 'SolverStats')
     //
-  , solves(0), starts(0), decisions(0), rnd_decisions(0), propagations(0), conflicts(0), conflicts_VSIDS(0)
+  , solves(0), starts(0), decisions(0), rnd_decisions(0), propagations(0), conflicts(0)
+#ifdef GLUCOSE3
+  , nbRemovedClauses(0), nbReducedClauses(0), nbDL2(0), nbBin(0), nbUn(0) , nbReduceDB(0)
+  , conflictsRestarts(0), nbstopsrestarts(0), nbstopsrestartssame(0), lastblockatrestart(0)
+  , curRestart(1)
+#else
+	, conflicts_VSIDS(0)
+#endif
   , dec_vars(0), clauses_literals(0), learnts_literals(0), max_literals(0), tot_literals(0)
 
   , ok                 (true)
@@ -119,11 +164,13 @@ Solver::Solver() :
   , qhead              (0)
   , simpDB_assigns     (-1)
   , simpDB_props       (0)
-  , order_heap_CHB     (VarOrderLt(activity_CHB
+#ifndef GLUCOSE3
+	, order_heap_CHB     (VarOrderLt(activity_CHB
 #ifdef VAR_PRIORITY_ENABLED
                                    , priority
 #endif
                        ))
+#endif
   , order_heap_VSIDS   (VarOrderLt(activity_VSIDS
 #ifdef VAR_PRIORITY_ENABLED
                                    , priority
@@ -132,6 +179,7 @@ Solver::Solver() :
   , progress_estimate  (0)
   , remove_satisfied   (true)
 
+#ifndef GLUCOSE3
   , core_lbd_cut       (3)
   , global_lbd_sum     (0)
   , lbd_queue          (50)
@@ -139,6 +187,7 @@ Solver::Solver() :
   , next_L_reduce      (15000)
   
   , counter            (0)
+#endif
 
     // Resource constraints:
     //
@@ -149,24 +198,38 @@ Solver::Solver() :
     // Model printing options:
   , modelPrintingMethod(opt_printing_method)
   , showExternalVariables(opt_show_external_vars)
-
 {}
 
 Solver::Solver(Solver *from) :
 
     // Parameters (user settable):
     //
-    drup_file         (from->drup_file)
-  , verbosity         (from->verbosity)
+		verbosity         (from->verbosity)
+#ifdef GLUCOSE3
+	, showModel         (from->showModel)
+	, K                 (from->K)
+	, R                 (from->R)
+	, sizeLBDQueue      (from->sizeLBDQueue)
+	, sizeTrailQueue    (from->sizeTrailQueue)
+	, firstReduceDB     (from->firstReduceDB)
+	, incReduceDB       (from->incReduceDB)
+	, specialIncReduceDB(from->specialIncReduceDB)
+	, lbLBDFrozenClause (from->lbLBDFrozenClause)
+	, lbSizeMinimizingClause(from->lbSizeMinimizingClause)
+	, lbLBDMinimizingClause(from->lbLBDMinimizingClause)
+#else
   , step_size         (from->step_size)
   , step_size_dec     (from->step_size_dec)
   , min_step_size     (from->min_step_size)
   , timer             (from->timer)
+#endif
   , var_decay         (from->var_decay)
   , clause_decay      (from->clause_decay)
   , random_var_freq   (from->random_var_freq)
   , random_seed       (from->random_seed)
+#ifndef GLUCOSE3
   , VSIDS             (from->VSIDS)
+#endif
   , heavy_propagation (from->heavy_propagation)
   , lazy_propagation  (from->lazy_propagation)
   , early_propagation (from->early_propagation)
@@ -176,6 +239,7 @@ Solver::Solver(Solver *from) :
   , rnd_pol           (from->rnd_pol)
   , rnd_init_act      (from->rnd_init_act)
   , garbage_frac      (from->garbage_frac)
+#ifndef GLUCOSE3
   , restart_first     (from->restart_first)
   , restart_inc       (from->restart_inc)
 
@@ -187,10 +251,18 @@ Solver::Solver(Solver *from) :
     //
   , learntsize_adjust_start_confl (from->learntsize_adjust_start_confl)
   , learntsize_adjust_inc         (from->learntsize_adjust_inc)
+#endif
 
     // Statistics: (formerly in 'SolverStats')
     //
-  , solves(0), starts(0), decisions(0), rnd_decisions(0), propagations(0), conflicts(0), conflicts_VSIDS(0)
+  , solves(0), starts(0), decisions(0), rnd_decisions(0), propagations(0), conflicts(0)
+#ifdef GLUCOSE3
+  , nbRemovedClauses(0), nbReducedClauses(0), nbDL2(0), nbBin(0), nbUn(0) , nbReduceDB(0)
+  , conflictsRestarts(0), nbstopsrestarts(0), nbstopsrestartssame(0), lastblockatrestart(0)
+  , curRestart(1)
+#else
+	, conflicts_VSIDS(0)
+#endif
   , dec_vars(0), clauses_literals(0), learnts_literals(0), max_literals(0), tot_literals(0)
 
   , ok                 (from->ok)
@@ -201,11 +273,13 @@ Solver::Solver(Solver *from) :
   , qhead              (0)
   , simpDB_assigns     (-1)
   , simpDB_props       (0)
+#ifndef GLUCOSE3
   , order_heap_CHB     (VarOrderLt(activity_CHB
 #ifdef VAR_PRIORITY_ENABLED
                                    , priority
 #endif
                        ))
+#endif
   , order_heap_VSIDS   (VarOrderLt(activity_VSIDS
 #ifdef VAR_PRIORITY_ENABLED
                                    , priority
@@ -214,12 +288,15 @@ Solver::Solver(Solver *from) :
   , progress_estimate  (from->progress_estimate)
   , remove_satisfied   (from->remove_satisfied)
 
+#ifndef GLUCOSE3
+  , core_lbd_cut       (from->core_lbd_cut)
   , global_lbd_sum     (from->global_lbd_sum)
   , lbd_queue          (from->lbd_queue.capacity())
   , next_T2_reduce     (from->next_T2_reduce)
   , next_L_reduce      (from->next_L_reduce)
   
   , counter            (from->counter)
+#endif
 
     // Resource constraints:
     //
@@ -262,14 +339,16 @@ Var Solver::newVar(bool sign, bool dvar)
     watches  .init(mkLit(v, true ));
     assigns  .push(l_Undef);
     vardata  .push(mkVarData(CRef_Undef, 0));
-    activity_CHB  .push(0);
     activity_VSIDS.push(rnd_init_act ? drand(random_seed) * 0.00001 : 0);
+#ifndef GLUCOSE3
+    activity_CHB  .push(0);
 
     picked.push(0);
     conflicted.push(0);
     almost_conflicted.push(0);
 #ifdef ANTI_EXPLORATION
     canceled.push(0);
+#endif
 #endif
 
 #ifdef VAR_PRIORITY_ENABLED
@@ -279,7 +358,11 @@ Var Solver::newVar(bool sign, bool dvar)
     factors  .push(1);
 #endif
     seen     .push(0);
+#ifdef GLUCOSE3
+    permDiff .push(0);
+#else
     seen2    .push(0);
+#endif
     polarity .push(sign);
     userDefPolarity.push(l_Undef);
     decision .push();
@@ -287,7 +370,6 @@ Var Solver::newVar(bool sign, bool dvar)
     setDecisionVar(v, dvar);
     return v;
 }
-
 
 bool Solver::addClause_(vec<Lit>& ps)
 {
@@ -298,32 +380,12 @@ bool Solver::addClause_(vec<Lit>& ps)
     sort(ps);
     Lit p; int i, j;
 
-    if (drup_file){
-        add_oc.clear();
-        for (int i = 0; i < ps.size(); i++) add_oc.push(ps[i]); }
-
     for (i = j = 0, p = lit_Undef; i < ps.size(); i++)
         if (value(ps[i]) == l_True || ps[i] == ~p)
             return true;
         else if (value(ps[i]) != l_False && ps[i] != p)
             ps[j++] = p = ps[i];
     ps.shrink(i - j);
-
-    if (drup_file && i != j){
-#ifdef BIN_DRUP
-        binDRUP('a', ps, drup_file);
-        binDRUP('d', add_oc, drup_file);
-#else
-        for (int i = 0; i < ps.size(); i++)
-            fprintf(drup_file, "%i ", (var(ps[i]) + 1) * (-2 * sign(ps[i]) + 1));
-        fprintf(drup_file, "0\n");
-
-        fprintf(drup_file, "d ");
-        for (int i = 0; i < add_oc.size(); i++)
-            fprintf(drup_file, "%i ", (var(add_oc[i]) + 1) * (-2 * sign(add_oc[i]) + 1));
-        fprintf(drup_file, "0\n");
-#endif
-    }
 
     if (ps.size() == 0)
         return ok = false;
@@ -375,20 +437,6 @@ void Solver::detachClause(CRef cr, bool strict) {
 void Solver::removeClause(CRef cr) {
     Clause& c = ca[cr];
 
-    if (drup_file){
-        if (c.mark() != 1){
-#ifdef BIN_DRUP
-            binDRUP('d', c, drup_file);
-#else
-            fprintf(drup_file, "d ");
-            for (int i = 0; i < c.size(); i++)
-                fprintf(drup_file, "%i ", (var(c[i]) + 1) * (-2 * sign(c[i]) + 1));
-            fprintf(drup_file, "0\n");
-#endif
-        }else
-            printf("c Bug. I don't expect this to happen.\n");
-    }
-
     detachClause(cr);
     // Don't leave pointers to free'd memory!
     if (locked(c)){
@@ -405,6 +453,84 @@ bool Solver::satisfied(const Clause& c) const {
             return true;
     return false; }
 
+#ifdef GLUCOSE3
+/************************************************************
+ * Compute LBD functions
+ *************************************************************/
+
+inline int Solver::computeLBD(const vec<Lit> & lits,int end) {
+	int nblevels = 0;
+	MYFLAG++;
+
+	for(int i=0;i<lits.size();i++) {
+		int l = level(var(lits[i]));
+		if (permDiff[l] != MYFLAG) {
+			permDiff[l] = MYFLAG;
+			nblevels++;
+		}
+	}
+
+	return nblevels;
+}
+
+inline int Solver::computeLBD(const Clause &c) {
+	int nblevels = 0;
+	MYFLAG++;
+
+	for(int i=0;i<c.size();i++) {
+		int l = level(var(c[i]));
+		if (permDiff[l] != MYFLAG) {
+			permDiff[l] = MYFLAG;
+			nblevels++;
+		}
+	}
+
+	return nblevels;
+}
+
+/******************************************************************
+ * Minimisation with binary reolution
+ ******************************************************************/
+void Solver::minimisationWithBinaryResolution(vec<Lit> &out_learnt) {
+  
+  // Find the LBD measure                                                                                                         
+  int lbd = computeLBD(out_learnt);
+  Lit p = ~out_learnt[0];
+  
+  if(lbd<=lbLBDMinimizingClause){
+    MYFLAG++;
+    
+    for(int i = 1;i<out_learnt.size();i++) {
+      permDiff[var(out_learnt[i])] = MYFLAG;
+    }
+
+    vec<Watcher>&  wbin  = watches_bin[p];
+    int nb = 0;
+    for(int k = 0;k<wbin.size();k++) {
+      Lit imp = wbin[k].blocker;
+      if(permDiff[var(imp)]==MYFLAG && value(imp)==l_True) {
+	nb++;
+	permDiff[var(imp)]= MYFLAG-1;
+      }
+      }
+    int l = out_learnt.size()-1;
+    if(nb>0) {
+      nbReducedClauses++;
+      for(int i = 1;i<out_learnt.size()-nb;i++) {
+	if(permDiff[var(out_learnt[i])]!=MYFLAG) {
+	  Lit p = out_learnt[l];
+	  out_learnt[l] = out_learnt[i];
+	  out_learnt[i] = p;
+	  l--;i--;
+	}
+      }
+      
+      out_learnt.shrink(nb);
+      
+    }
+  }
+}
+#endif
 
 // Revert to the state at given level (keeping all assignment at 'level' but not beyond).
 //
@@ -417,6 +543,7 @@ void Solver::cancelUntil(int level) {
         for (int c = trail.size()-1; c >= trail_lim[level]; c--){
             Var      x  = var(trail[c]);
 
+#ifndef GLUCOSE3
             if (!VSIDS){
                 uint32_t age = conflicts - picked[x];
                 if (age > 0){
@@ -434,6 +561,7 @@ void Solver::cancelUntil(int level) {
                 canceled[x] = conflicts;
 #endif
             }
+#endif
 
             assigns [x] = l_Undef;
             if (phase_saving > 1 || (phase_saving == 1) && c > trail_lim.last())
@@ -452,19 +580,26 @@ void Solver::cancelUntil(int level) {
 Lit Solver::pickBranchLit()
 {
     Var next = var_Undef;
+#ifdef GLUCOSE3
+    Heap<VarOrderLt>& order_heap = order_heap_VSIDS;
+#else
     Heap<VarOrderLt>& order_heap = VSIDS ? order_heap_VSIDS : order_heap_CHB;
+#endif
 
+#ifdef GLUCOSE3
     // Random decision:
-    /*if (drand(random_seed) < random_var_freq && !order_heap.empty()){
+    if (drand(random_seed) < random_var_freq && !order_heap.empty()){
         next = order_heap[irand(random_seed,order_heap.size())];
         if (value(next) == l_Undef && decision[next])
-            rnd_decisions++; }*/
+            rnd_decisions++; }
+#endif
 
     // Activity based decision:
     while (next == var_Undef || value(next) != l_Undef || !decision[next])
         if (order_heap.empty())
             return lit_Undef;
         else{
+#ifndef GLUCOSE3
 #ifdef ANTI_EXPLORATION
             if (!VSIDS){
                 Var v = order_heap_CHB[0];
@@ -479,6 +614,7 @@ Lit Solver::pickBranchLit()
                     age = conflicts - canceled[v];
                 }
             }
+#endif
 #endif
             next = order_heap.removeMin();
         }
@@ -504,7 +640,7 @@ Lit Solver::pickBranchLit()
 |        rest of literals. There may be others from the same level though.
 |  
 |________________________________________________________________________________________________@*/
-void Solver::analyze(CRef confl, vec<Lit>& out_learnt, int& out_btlevel, int& out_lbd)
+void Solver::analyze(CRef confl, vec<Lit>& out_learnt, int& out_btlevel, int &out_lbd)
 {
     int pathC = 0;
     Lit p     = lit_Undef;
@@ -519,11 +655,29 @@ void Solver::analyze(CRef confl, vec<Lit>& out_learnt, int& out_btlevel, int& ou
         Clause& c = ca[confl];
 
         // For binary clauses, we don't rearrange literals in propagate(), so check and make sure the first is an implied lit.
-        if (p != lit_Undef && c.size() == 2 && value(c[0]) == l_False){
+        if (p != lit_Undef && c.size() == 2 && value(c[0]) == l_False) {
             assert(value(c[1]) == l_True);
             Lit tmp = c[0];
             c[0] = c[1], c[1] = tmp; }
 
+#ifdef GLUCOSE3
+			if (c.learnt())
+				claBumpActivity(c);
+
+#ifdef DYNAMICNBLEVEL
+			// DYNAMIC NBLEVEL trick (see competition'09 companion paper)
+			if(c.learnt()  && c.lbd()>2) {
+				int nblevels = computeLBD(c);
+				if(nblevels+1<c.lbd() ) { // improve the LBD
+					if(c.lbd()<=lbLBDFrozenClause) {
+						c.removable(false);
+					}
+					// seems to be interesting : keep it for the next round
+					c.set_lbd(nblevels); // Update it
+				}
+			}
+#endif
+#else
         // Update LBD if improved.
         if (c.learnt() && c.mark() != CORE){
             int lbd = computeLBD(c);
@@ -545,11 +699,25 @@ void Solver::analyze(CRef confl, vec<Lit>& out_learnt, int& out_btlevel, int& ou
             else if (c.mark() == LOCAL)
                 claBumpActivity(c);
         }
+#endif
 
         for (int j = (p == lit_Undef) ? 0 : 1; j < c.size(); j++){
             Lit q = c[j];
 
             if (!seen[var(q)] && level(var(q)) > 0){
+#ifdef GLUCOSE3
+							varBumpActivity(var(q));
+							seen[var(q)] = 1;
+							if (level(var(q)) >= decisionLevel()) {
+								pathC++;
+#ifdef UPDATEVARACTIVITY
+								// UPDATEVARACTIVITY trick (see competition'09 companion paper)
+								if ((reason(var(q))!= CRef_Undef)  && ca[reason(var(q))].learnt())
+									lastDecisionLevel.push(q);
+#endif
+							}
+							else out_learnt.push(q);
+#else
                 if (VSIDS){
                     varBumpActivity(var(q), .5);
                     add_tmp.push(q);
@@ -560,6 +728,7 @@ void Solver::analyze(CRef confl, vec<Lit>& out_learnt, int& out_btlevel, int& ou
                     pathC++;
 								}else
                     out_learnt.push(q);
+#endif
             }
         }
         
@@ -576,6 +745,7 @@ void Solver::analyze(CRef confl, vec<Lit>& out_learnt, int& out_btlevel, int& ou
     // Simplify conflict clause:
     //
     int i, j;
+
     out_learnt.copyTo(analyze_toclear);
     if (ccmin_mode == 2){
         uint32_t abstract_level = 0;
@@ -594,7 +764,7 @@ void Solver::analyze(CRef confl, vec<Lit>& out_learnt, int& out_btlevel, int& ou
                 out_learnt[j++] = out_learnt[i];
             else{
                 Clause& c = ca[reason(var(out_learnt[i]))];
-                for (int k = c.size() == 2 ? 0 : 1; k < c.size(); k++)
+                for (int k = (c.size() == 2) ? 0 : 1; k < c.size(); k++)
                     if (!seen[var(c[k])] && level(var(c[k])) > 0){
                         out_learnt[j++] = out_learnt[i];
                         break; }
@@ -607,10 +777,22 @@ void Solver::analyze(CRef confl, vec<Lit>& out_learnt, int& out_btlevel, int& ou
     out_learnt.shrink(i - j);
     tot_literals += out_learnt.size();
 
+#ifdef GLUCOSE3
+    /* ***************************************
+      Minimisation with binary clauses of the asserting clause
+      First of all : we look for small clauses
+      Then, we reduce clauses with small LBD.
+      Otherwise, this can be useless
+     */
+    if(out_learnt.size()<=lbSizeMinimizingClause) {
+      minimisationWithBinaryResolution(out_learnt);
+    }
+#else
     out_lbd = computeLBD(out_learnt);
     if (out_lbd <= 6 && out_learnt.size() <= 30) // Try further minimization?
         if (binResMinimize(out_learnt))
             out_lbd = computeLBD(out_learnt); // Recompute LBD if minimized.
+#endif
 
     // Find correct backtrack level:
     //
@@ -629,6 +811,21 @@ void Solver::analyze(CRef confl, vec<Lit>& out_learnt, int& out_btlevel, int& ou
         out_btlevel       = level(var(p));
     }
 
+#ifdef GLUCOSE3
+    // Compute LBD
+    out_lbd = computeLBD(out_learnt,out_learnt.size());
+  
+#ifdef UPDATEVARACTIVITY
+    // UPDATEVARACTIVITY trick (see competition'09 companion paper)
+    if(lastDecisionLevel.size()>0) {
+      for(int i = 0;i<lastDecisionLevel.size();i++) {
+        if(ca[reason(var(lastDecisionLevel[i]))].lbd()<out_lbd)
+          varBumpActivity(var(lastDecisionLevel[i]));
+      }
+      lastDecisionLevel.clear();
+    }
+#endif	    
+#else
     if (VSIDS){
         for (int i = 0; i < add_tmp.size(); i++){
             Var v = var(add_tmp[i]);
@@ -649,11 +846,12 @@ void Solver::analyze(CRef confl, vec<Lit>& out_learnt, int& out_btlevel, int& ou
                         seen[var(l)] = true;
                         almost_conflicted[var(l)]++;
                         analyze_toclear.push(l); } } } } }
+#endif
 
     for (int j = 0; j < analyze_toclear.size(); j++) seen[var(analyze_toclear[j])] = 0;    // ('seen[]' is now cleared)
 }
 
-
+#ifndef GLUCOSE3
 // Try further learnt clause minimization by means of binary clause resolution.
 bool Solver::binResMinimize(vec<Lit>& out_learnt)
 {
@@ -685,7 +883,7 @@ bool Solver::binResMinimize(vec<Lit>& out_learnt)
     }
     return to_remove != 0;
 }
-
+#endif
 
 // Check if 'p' can be removed. 'abstract_levels' is used to abort early if the algorithm is
 // visiting literals at levels that cannot be removed later.
@@ -751,7 +949,7 @@ void Solver::analyzeFinal(Lit p, vec<Lit>& out_conflict)
                 out_conflict.push(~trail[i]);
             }else{
                 Clause& c = ca[reason(x)];
-                for (int j = c.size() == 2 ? 0 : 1; j < c.size(); j++)
+                for (int j = (c.size() == 2) ? 0 : 1; j < c.size(); j++)
                     if (level(var(c[j])) > 0)
                         seen[var(c[j])] = 1;
             }
@@ -767,6 +965,7 @@ void Solver::uncheckedEnqueue(Lit p, CRef from)
 {
     assert(value(p) == l_Undef);
     Var x = var(p);
+#ifndef GLUCOSE3
     if (!VSIDS){
         picked[x] = conflicts;
         conflicted[x] = 0;
@@ -781,6 +980,7 @@ void Solver::uncheckedEnqueue(Lit p, CRef from)
         }
 #endif
     }
+#endif
 
     assigns[x] = lbool(!sign(p));
     vardata[x] = mkVarData(from, decisionLevel());
@@ -820,14 +1020,9 @@ CRef Solver::propagate(bool applyExternals)
         vec<Watcher>& ws_bin = watches_bin[p];  // Propagate binary clauses first.
         for (int k = 0; k < ws_bin.size(); k++){
             Lit the_other = ws_bin[k].blocker;
-            if (value(the_other) == l_False){
-                confl = ws_bin[k].cref;
-#ifdef LOOSE_PROP_STAT
-                return confl;
-#else
-                goto ExitProp;
-#endif
-            }else if(value(the_other) == l_Undef)
+            if (value(the_other) == l_False)
+                return ws_bin[k].cref;
+            if(value(the_other) == l_Undef)
 						{
 #ifdef SHOW_PROPAGATIONS
 								printf("propagating "); printLiteral(stdout, the_other); printf(" at decision level %d because of binary clause ", decisionLevel());
@@ -916,14 +1111,10 @@ CRef Solver::propagate(bool applyExternals)
 	}
 	while (qhead < trail.size());
 	
-#ifndef LOOSE_PROP_STAT
-ExitProp:;
-#endif
+  propagations += num_props;
+  simpDB_props -= num_props;
 
-    propagations += num_props;
-    simpDB_props -= num_props;
-
-    return confl;
+  return confl;
 }
 
 
@@ -938,31 +1129,74 @@ ExitProp:;
 struct reduceDB_lt { 
     ClauseAllocator& ca;
     reduceDB_lt(ClauseAllocator& ca_) : ca(ca_) {}
+#ifdef GLUCOSE3
+    bool operator () (CRef x, CRef y) { 
+			// Main criteria... Like in MiniSat we keep all binary clauses
+			if(ca[x].size()> 2 && ca[y].size()==2) return 1;
+
+			if(ca[y].size()>2 && ca[x].size()==2) return 0;
+			if(ca[x].size()==2 && ca[y].size()==2) return 0;
+
+			// Second one  based on literal block distance
+			if(ca[x].lbd()> ca[y].lbd()) return 1;
+			if(ca[x].lbd()< ca[y].lbd()) return 0;
+
+			// Finally we can use old activity or size, we choose the last one
+			return ca[x].activity() < ca[y].activity();
+			//return x->size() < y->size();
+
+			//return ca[x].size() > 2 && (ca[y].size() == 2 || ca[x].activity() < ca[y].activity()); } 
+    }    
+#else
     bool operator () (CRef x, CRef y) const { return ca[x].activity() < ca[y].activity(); }
+#endif
 };
 void Solver::reduceDB()
 {
-    int     i, j;
-    //if (local_learnts_dirty) cleanLearnts(learnts_local, LOCAL);
-    //local_learnts_dirty = false;
+  int     i, j;
+#ifdef GLUCOSE3
+  nbReduceDB++;
 
-    sort(learnts_local, reduceDB_lt(ca));
+  // We have a lot of "good" clauses, it is difficult to compare them. Keep more !
+  if(ca[learnts_local[learnts_local.size() / RATIOREMOVECLAUSES]].lbd()<=3) nbclausesbeforereduce +=specialIncReduceDB;
+  // Useless :-)
+  if(ca[learnts_local.last()].lbd()<=5) nbclausesbeforereduce +=specialIncReduceDB;
+#endif
+  sort(learnts_local, reduceDB_lt(ca));
 
-    int limit = learnts_local.size() / 2;
-    for (i = j = 0; i < learnts_local.size(); i++){
-        Clause& c = ca[learnts_local[i]];
-        if (c.mark() == LOCAL)
-            if (c.removable() && !locked(c) && i < limit)
-                removeClause(learnts_local[i]);
-            else{
-                if (!c.removable()) limit++;
-                c.removable(true);
-                learnts_local[j++] = learnts_local[i]; }
-    }
-    learnts_local.shrink(i - j);
+  // Don't delete binary or locked clauses. From the rest, delete clauses from the first half
+  // Keep clauses which seem to be usefull (their lbd was reduce during this sequence)
 
-    checkGarbage();
+  int limit = learnts_local.size() / 2;
+  for (i = j = 0; i < learnts_local.size(); i++){
+    Clause& c = ca[learnts_local[i]];
+		bool test;
+#ifdef GLUCOSE3
+		test = (c.lbd() > 2) && (c.size() > 2) && c.removable() &&  !locked(c) && (i < limit);
+#else
+		test = c.removable() && !locked(c) && (i < limit);
+#endif
+#ifndef GLUCOSE3
+		if (c.mark() == LOCAL)
+#endif
+	    if (test) {
+		    removeClause(learnts_local[i]);
+#ifdef GLUCOSE3
+  		  nbRemovedClauses++;
+#endif
+	    }
+		  else {
+  		  if (!c.removable()) limit++; //we keep c, so we can delete an other clause
+    		c.removable(true);       // At the next step, c can be delete
+    		learnts_local[j++] = learnts_local[i];
+  		}
+  }
+  learnts_local.shrink(i - j);
+
+	checkGarbage();
 }
+
+#ifndef GLUCOSE3
 void Solver::reduceDB_Tier2()
 {
     int i, j;
@@ -980,7 +1214,7 @@ void Solver::reduceDB_Tier2()
     }
     learnts_tier2.shrink(i - j);
 }
-
+#endif
 
 void Solver::removeSatisfied(vec<CRef>& cs)
 {
@@ -995,6 +1229,7 @@ void Solver::removeSatisfied(vec<CRef>& cs)
     cs.shrink(i - j);
 }
 
+#ifndef GLUCOSE3
 void Solver::safeRemoveSatisfied(vec<CRef>& cs, unsigned valid_mark)
 {
     int i, j;
@@ -1008,6 +1243,7 @@ void Solver::safeRemoveSatisfied(vec<CRef>& cs, unsigned valid_mark)
     }
     cs.shrink(i - j);
 }
+#endif
 
 void Solver::rebuildOrderHeap()
 {
@@ -1016,7 +1252,9 @@ void Solver::rebuildOrderHeap()
         if (decision[v] && value(v) == l_Undef)
             vs.push(v);
 
+#ifndef GLUCOSE3
     order_heap_CHB  .build(vs);
+#endif
     order_heap_VSIDS.build(vs);
 }
 
@@ -1041,9 +1279,13 @@ bool Solver::simplify()
         return true;
 
     // Remove satisfied clauses:
+#ifdef GLUCOSE3
+    removeSatisfied(learnts_local);
+#else
     removeSatisfied(learnts_core); // Should clean core first.
     safeRemoveSatisfied(learnts_tier2, TIER2);
     safeRemoveSatisfied(learnts_local, LOCAL);
+#endif
     if (remove_satisfied)        // Can be turned off.
         removeSatisfied(clauses);
     checkGarbage();
@@ -1068,188 +1310,243 @@ bool Solver::simplify()
 |    all variables are decision variables, this means that the clause set is satisfiable. 'l_False'
 |    if the clause set is unsatisfiable. 'l_Undef' if the bound on number of conflicts is reached.
 |________________________________________________________________________________________________@*/
-lbool Solver::search(const vec<Lit> &assumptions, int &nof_conflicts)
-{
-    assert(ok);
-    int         backtrack_level;
-    int         lbd;
-    vec<Lit>    learnt_clause;
-    bool        cached = false;
-    starts++;
-
-    for (;;){
-        CRef confl = propagate(early_propagation && (decisionLevel() >= assumptions.size()));
-        if (confl != CRef_Undef){
-            // CONFLICT
-            if (VSIDS){
-                if (--timer == 0 && var_decay < 0.95) timer = 5000, var_decay += 0.01;
-            }else
-                if (step_size > min_step_size) step_size -= step_size_dec;
-
-            conflicts++; nof_conflicts--;
-            if (conflicts == 100000 && learnts_core.size() < 100) core_lbd_cut = 5;
-
-						// Shahab: Using propagators, we might receive a conflict that does not belong to
-						//         the decision level (i.e., for all literals L in the conflict clause,
-						//         decision_level(l) is less than current decision level. This causes
-						//         problems to "analyze" procedure.
-						//         Hence, we first backtrack to the maximum decision level of the conflict
-						//         clause and then continue with the conflict analysis
-						int maxDecLevel = 0;
-						Clause &conflictClause = ca[confl];
-						for (int i = 0; i < conflictClause.size(); i++)
-							if (vardata[var(conflictClause[i])].level > maxDecLevel)
-							{
-								maxDecLevel = vardata[var(conflictClause[i])].level;
-								if (maxDecLevel == decisionLevel())
-									break; // already at maximum possible level. stop looking further.
-							}
-						if (maxDecLevel < decisionLevel())
-							cancelUntil(maxDecLevel);
-						// Shahab: then, continue with normal analysis
-
-						if (decisionLevel() == 0) return l_False;
-
-						learnt_clause.clear();
-            analyze(confl, learnt_clause, backtrack_level, lbd);
-            cancelUntil(backtrack_level);
-
-            lbd--;
-            if (VSIDS){
-                cached = false;
-                conflicts_VSIDS++;
-                lbd_queue.push(lbd);
-                global_lbd_sum += (lbd > 50 ? 50 : lbd); }
-
-            if (learnt_clause.size() == 1){
-                uncheckedEnqueue(learnt_clause[0]);
-            }else{
-                CRef cr = ca.alloc(learnt_clause, true);
-                ca[cr].set_lbd(lbd);
-                if (lbd <= core_lbd_cut){
-                    learnts_core.push(cr);
-                    ca[cr].mark(CORE);
-                }else if (lbd <= 6){
-                    learnts_tier2.push(cr);
-                    ca[cr].mark(TIER2);
-                    ca[cr].touched() = conflicts;
-                }else{
-                    learnts_local.push(cr);
-                    claBumpActivity(ca[cr]); }
-                attachClause(cr);
-                uncheckedEnqueue(learnt_clause[0], cr);
-            }
-            if (drup_file){
-#ifdef BIN_DRUP
-                binDRUP('a', learnt_clause, drup_file);
+#ifdef GLUCOSE3
+lbool Solver::search(const vec<Lit> &assumptions, int nof_conflicts)
 #else
-                for (int i = 0; i < learnt_clause.size(); i++)
-                    fprintf(drup_file, "%i ", (var(learnt_clause[i]) + 1) * (-2 * sign(learnt_clause[i]) + 1));
-                fprintf(drup_file, "0\n");
+lbool Solver::search(const vec<Lit> &assumptions, int &nof_conflicts)
 #endif
-            }
+{
+	assert(ok);
+	int         backtrack_level;
+	vec<Lit>    learnt_clause;
+#ifdef GLUCOSE3
+	int         conflictC = 0;
+	vec<Lit>    selectors;
+	int         nblevels;
+	bool blocked=false;
+#else
+	int         lbd;
+	bool        cached = false;
+#endif
+	starts++;
 
-            if (VSIDS) varDecayActivity();
-            claDecayActivity();
+	for (;;){
+		CRef confl = propagate(early_propagation && (decisionLevel() >= assumptions.size()));
+		if (confl != CRef_Undef){
+			// CONFLICT
+			conflicts++; nof_conflicts--;
+#ifdef GLUCOSE3
+			conflictC++; conflictsRestarts++;
+			if(conflicts%5000==0 && var_decay<0.95)
+				var_decay += 0.01;
 
-            /*if (--learntsize_adjust_cnt == 0){
-                learntsize_adjust_confl *= learntsize_adjust_inc;
-                learntsize_adjust_cnt    = (int)learntsize_adjust_confl;
-                max_learnts             *= learntsize_inc;
+			if (verbosity >= 1 && conflicts%verbEveryConflicts==0){
+				printf("c | %8d   %7d    %5d | %7d %8d %8d | %5d %8d   %6d %8d | %6.3f %% |\n",
+				       (int)starts,(int)nbstopsrestarts, (int)(conflicts/starts),
+				       (int)dec_vars - (trail_lim.size() == 0 ? trail.size() : trail_lim[0]), nClauses(), (int)clauses_literals,
+				       (int)nbReduceDB, nLearnts(), (int)nbDL2,(int)nbRemovedClauses, progressEstimate()*100);
+			}
+#else
+			if (VSIDS){
+				if (--timer == 0 && var_decay < 0.95) timer = 5000, var_decay += 0.01;
+			}
+			else if (step_size > min_step_size) step_size -= step_size_dec;
 
-                if (verbosity >= 1)
-                    printf("c | %9d | %7d %8d %8d | %8d %8d %6.0f | %6.3f %% |\n", 
-                           (int)conflicts, 
-                           (int)dec_vars - (trail_lim.size() == 0 ? trail.size() : trail_lim[0]), nClauses(), (int)clauses_literals, 
-                           (int)max_learnts, nLearnts(), (double)learnts_literals/nLearnts(), progressEstimate()*100);
-            }*/
+			if (conflicts == 100000 && learnts_core.size() < 100) core_lbd_cut = 5;
+#endif
 
-        }else{
-            // NO CONFLICT
-            bool restart = false;
-            if (!VSIDS)
-                restart = nof_conflicts <= 0;
-            else if (!cached){
-                restart = lbd_queue.full() && (lbd_queue.avg() * 0.8 > global_lbd_sum / conflicts_VSIDS);
-                cached = true;
-            }
-            if (restart/* || !withinBudget()*/){
-                lbd_queue.clear();
-                cached = false;
-                // Reached bound on number of conflicts:
-                progress_estimate = progressEstimate();
-                cancelUntil(0);
-                return l_Undef; }
+			// Shahab: Using propagators, we might receive a conflict that does not belong to
+			//         the current decision level (i.e., for all literals L in the conflict
+			//         clause, decision_level(l) is less than current decision level). This
+			//         causes problems to "analyze" procedure.
+			//         Hence, we first backtrack to the maximum decision level of the conflict
+			//         clause and then continue with the conflict analysis
+			int maxDecLevel = 0;
+			Clause &conflictClause = ca[confl];
+			for (int i = 0; i < conflictClause.size(); i++)
+				if (vardata[var(conflictClause[i])].level > maxDecLevel)
+				{
+					maxDecLevel = vardata[var(conflictClause[i])].level;
+					if (maxDecLevel == decisionLevel())
+						break; // already at maximum possible level. stop looking further.
+				}
+			if (maxDecLevel < decisionLevel())
+				cancelUntil(maxDecLevel);
+			// Shahab: then, continue with normal analysis
 
-            // Simplify the set of problem clauses:
-            if (decisionLevel() == 0 && !simplify())
-                return l_False;
+			if (decisionLevel() == 0) return l_False;
+#ifdef GLUCOSE3
+			trailQueue.push(trail.size());
+			// BLOCK RESTART (CP 2012 paper)
+			if( conflictsRestarts>LOWER_BOUND_FOR_BLOCKING_RESTART && lbdQueue.isvalid()  && trail.size()>R*trailQueue.getavg()) {
+				lbdQueue.fastclear();
+				nbstopsrestarts++;
+				if(!blocked) {lastblockatrestart=starts;nbstopsrestartssame++;blocked=true;}
+			}
+#endif
 
-            if (conflicts >= next_T2_reduce){
-                next_T2_reduce = conflicts + 10000;
-                reduceDB_Tier2(); }
-            if (conflicts >= next_L_reduce){
-                next_L_reduce = conflicts + 15000;
-                reduceDB(); }
+			learnt_clause.clear();
+#ifdef GLUCOSE3
+			analyze(confl, learnt_clause, backtrack_level, nblevels);
+			lbdQueue.push(nblevels);
+			sumLBD += nblevels;
+#else
+			analyze(confl, learnt_clause, backtrack_level, lbd);
+#endif
+			cancelUntil(backtrack_level);
 
-            Lit next = lit_Undef;
-            while (decisionLevel() < assumptions.size()){
-                // Perform user provided assumption:
-                Lit p = assumptions[decisionLevel()];
-                if (value(p) == l_True){
-                    // Dummy decision level:
-                    // newDecisionLevel();
+#ifndef GLUCOSE3
+			lbd--;
+			if (VSIDS){
+				cached = false;
+				conflicts_VSIDS++;
+				lbd_queue.push(lbd);
+				global_lbd_sum += (lbd > 50 ? 50 : lbd); }
+#endif
 
-										// In Minisat, when an assumption is already deduced, i.e., value(p) is
-										// true, a dummy decision level is created and nothing else happens but,
-										// when propagators are present, such a dummy decision level means that
-										// some of the propagators are not tested for consistency. If such a case
-										// happens in the end of solving a program, it means that we might find a
-										// model that is inconsistent with the propagators.
-										//
-										// So, when propagators are present, even dummy decision levels should
-										// pass some consistency tests and, hence, the propagate() method should
-										// run.
-                    next = p;
-                    break;
-								}else if (value(p) == l_False){
-                    analyzeFinal(~p, conflict);
-                    return l_False;
-                }else{
-                    next = p;
-                    break;
-                }
-            }
+			if (learnt_clause.size() == 1){
+				uncheckedEnqueue(learnt_clause[0]);
+#ifdef GLUCOSE3
+				nbUn++;
+#endif
+			}else{
+				CRef cr = ca.alloc(learnt_clause, true);
+#ifdef GLUCOSE3
+				ca[cr].set_lbd(nblevels);
+				if(nblevels<=2) nbDL2++; // stats
+				if(ca[cr].size()==2) nbBin++; // stats
+				learnts_local.push(cr);
+#else
+				ca[cr].set_lbd(lbd);
+				if (lbd <= core_lbd_cut){
+					learnts_core.push(cr);
+					ca[cr].mark(CORE);
+				}else if (lbd <= 6){
+					learnts_tier2.push(cr);
+					ca[cr].mark(TIER2);
+					ca[cr].touched() = conflicts;
+				}else{
+					learnts_local.push(cr);
+					claBumpActivity(ca[cr]); }
+#endif
+				attachClause(cr);
+#ifdef GLUCOSE3
+				claBumpActivity(ca[cr]);
+#endif
+				uncheckedEnqueue(learnt_clause[0], cr);
+			}
 
-            if (next == lit_Undef) {
-                // New variable decision:
-                decisions++;
-                next = pickBranchLit();
+#ifdef GLUCOSE3
+			varDecayActivity();
+#else
+			if (VSIDS) varDecayActivity();
+#endif
+			claDecayActivity();
+		}else{
+			// NO CONFLICT
+#ifdef GLUCOSE3
+			// Our dynamic restart, see the SAT09 competition compagnion paper
+			if ( lbdQueue.isvalid() && ((lbdQueue.getavg()*K) > (sumLBD / conflictsRestarts))) {
+				lbdQueue.fastclear();
+				progress_estimate = progressEstimate();
+				int bt = 0;
+				cancelUntil(bt);
+				return l_Undef; }
+#else
+			bool restart = false;
+			if (!VSIDS)
+				restart = nof_conflicts <= 0;
+			else if (!cached){
+				restart = lbd_queue.full() && (lbd_queue.avg() * 0.8 > global_lbd_sum / conflicts_VSIDS);
+				cached = true;
+			}
+			if (restart/* || !withinBudget()*/){
+				lbd_queue.clear();
+				cached = false;
+				// Reached bound on number of conflicts:
+				progress_estimate = progressEstimate();
+				cancelUntil(0);
+				return l_Undef; }
+#endif
 
-		//		printf("Setting literal %i,\n",var(next));
+			// Simplify the set of problem clauses:
+			if (decisionLevel() == 0 && !simplify())
+				return l_False;
 
-                if (next == lit_Undef) {
-		  // Model found:
-			decisionLits.growTo(trail_lim.size());
-			for (int i = 0; i < trail_lim.size(); i++)
-				decisionLits[i] = trail[trail_lim[i]];
-			return l_True;
-		}
-            }
+#ifdef GLUCOSE3
+			// Perform clause database reduction !
+			if (conflicts >= curRestart * nbclausesbeforereduce)
+			{
+				assert(learnts_local.size()>0);
+				curRestart = (conflicts/ nbclausesbeforereduce)+1;
+				reduceDB();
+				nbclausesbeforereduce += incReduceDB;
+			}
+#else
+			if (conflicts >= next_T2_reduce){
+				next_T2_reduce = conflicts + 10000;
+				reduceDB_Tier2(); }
+			if (conflicts >= next_L_reduce){
+				next_L_reduce = conflicts + 15000;
+				reduceDB(); }
+#endif
 
-	    if(next != lit_Undef) {
-	      // Increase decision level and enqueue 'next'
-	      newDecisionLevel();
-				if (value(next) != l_True)	// Shahab: this check is needed so that dummy decision varibales
-																		// are not put in the queue twice
-		      uncheckedEnqueue(next);
+			Lit next = lit_Undef;
+			while (decisionLevel() < assumptions.size()){
+				// Perform user provided assumption:
+				Lit p = assumptions[decisionLevel()];
+				if (value(p) == l_True){
+					// Dummy decision level:
+					// newDecisionLevel();
+					// In Minisat, when an assumption is already deduced, i.e., value(p) is
+					// true, a dummy decision level is created and nothing else happens but,
+					// when propagators are present, such a dummy decision level means that
+					// some of the propagators are not tested for consistency. If such a case
+					// happens in the end of solving a program, it means that we might find a
+					// model that is inconsistent with the propagators.
+					//
+					// So, when propagators are present, even dummy decision levels should
+					// pass some consistency tests and, hence, the propagate() method should
+					// run.
+					next = p;
+					break;
+				}else if (value(p) == l_False){
+					analyzeFinal(~p, conflict);
+					return l_False;
+				}else{
+					next = p;
+					break;
+				}
+			}
+
+			if (next == lit_Undef) {
+				// New variable decision:
+				decisions++;
+				next = pickBranchLit();
+				//		printf("Setting literal %i,\n",var(next));
+				if (next == lit_Undef) {
+					// Model found:
+					decisionLits.growTo(trail_lim.size());
+					for (int i = 0; i < trail_lim.size(); i++)
+						decisionLits[i] = trail[trail_lim[i]];
+					return l_True;
+				}
+			}
+
+			if(next != lit_Undef) {
+				// Increase decision level and enqueue 'next'
+				newDecisionLevel();
+				if (value(next) != l_True)
+					// Shahab: this check is needed so that dummy decision varibales
+					// are not put in the queue twice
+					uncheckedEnqueue(next);
 
 #ifdef SHOW_PROPAGATIONS
-							printf("deciding literal "); printLiteral(stdout, next); printf("\n");
+				printf("deciding literal "); printLiteral(stdout, next); printf("\n");
 #endif
 			}
-        }
-    }
+		}
+	}
 }
 
 
@@ -1267,6 +1564,7 @@ double Solver::progressEstimate() const
     return progress / nVars();
 }
 
+#ifndef GLUCOSE3
 /*
   Finite subsequences of the Luby-sequence:
 
@@ -1297,93 +1595,120 @@ static double luby(double y, int x){
 
 static bool switch_mode = false;
 static void SIGALRM_switch(int signum) { switch_mode = true; }
+#endif
 
 // NOTE: assumptions passed in member-variable 'assumptions'.
 lbool Solver::solve_(const vec<Lit> &assumptions)
 {
-    signal(SIGALRM, SIGALRM_switch);
-    alarm(2500);
+#ifndef GLUCOSE3
+	signal(SIGALRM, SIGALRM_switch);
+	alarm(2500);
+#endif
 
-    model.clear();
-		decisionLits.clear();
-    conflict.clear();
-    rebuildOrderHeap();
-    if (!ok) return l_False;
+	model.clear();
+	decisionLits.clear();
+	conflict.clear();
+	rebuildOrderHeap();
 
-		// Initializing propagators:
-		for (auto it = propagators.begin(); it != propagators.end(); it++)
-			if (!((*it)->initialize()))
+	if (!ok) return l_False;
+	// Initializing propagators:
+	for (auto it = propagators.begin(); it != propagators.end(); it++)
+		if (!((*it)->initialize()))
+		{
+			ok = false;
+			break;
+		}
+
+	if (!ok) return l_False;
+	solves++;
+
+#ifndef GLUCOSE3
+	max_learnts               = nClauses() * learntsize_factor;
+	learntsize_adjust_confl   = learntsize_adjust_start_confl;
+	learntsize_adjust_cnt     = (int)learntsize_adjust_confl;
+#endif
+	lbool   status        = l_Undef;
+	if(verbosity>=1) {
+		printf("c ========================================[ MAGIC CONSTANTS ]==============================================\n");
+		printf("c | Constants are supposed to work well together :-)                                                      |\n");
+		printf("c | however, if you find better choices, please let us known...                                           |\n");
+		printf("c |-------------------------------------------------------------------------------------------------------|\n");
+		printf("c |                                |                                |                                     |\n"); 
+		printf("c | - Restarts:                    | - Reduce Clause DB:            | - Minimize Asserting:               |\n");
+#ifdef GLUCOSE3
+		printf("c |   * LBD Queue    : %6d      |   * First     : %6" PRIu64 "         |    * size < %3d                     |\n",lbdQueue.maxSize(),nbclausesbeforereduce,lbSizeMinimizingClause);
+		printf("c |   * Trail  Queue : %6d      |   * Inc       : %6d         |    * lbd  < %3d                     |\n",trailQueue.maxSize(),incReduceDB,lbLBDMinimizingClause);
+		printf("c |   * K            : %6.2f      |   * Special   : %6d         |                                     |\n",K,specialIncReduceDB);
+		printf("c |   * R            : %6.2f      |   * Protected :  (lbd)< %2d     |                                     |\n",R,lbLBDFrozenClause);
+#endif
+		printf("c |                                |                                |                                     |\n");
+#ifdef GLUCOSE3
+		printf("c ==================================[ Search Statistics (every %6d conflicts) ]=========================\n",verbEveryConflicts);
+#else
+		printf("c ===============================================[ Search Statistics ]=====================================\n");
+#endif
+		printf("c |                                                                                                       |\n"); 
+		printf("c |          RESTARTS           |          ORIGINAL         |              LEARNT              | Progress |\n");
+		printf("c |       NB   Blocked  Avg Cfc |    Vars  Clauses Literals |   Red   Learnts    LBD2  Removed |          |\n");
+		printf("c =========================================================================================================\n");
+	}
+
+#ifndef GLUCOSE3
+	add_tmp.clear();
+
+	VSIDS = true;
+	int init = 10000;
+	while (status == l_Undef && init > 0)
+		status = search(assumptions, init);
+	VSIDS = false;
+#endif
+	// Search:
+	int curr_restarts = 0;
+	while (status == l_Undef){
+#ifdef GLUCOSE3
+		status = search(assumptions, 0); // the parameter is useless in glucose, kept to allow modifications
+
+		if (!withinBudget()) break;
+		curr_restarts++;
+#else
+		if (VSIDS){
+			int weighted = INT32_MAX;
+			status = search(assumptions, weighted);
+		}else{
+			int nof_conflicts = luby(restart_inc, curr_restarts) * restart_first;
+			curr_restarts++;
+			status = search(assumptions, nof_conflicts);
+		}
+		if (!VSIDS && switch_mode){
+			VSIDS = true;
+			if (verbosity >= 1)
 			{
-				// TODO(shahab) : set the conflict appropriately by setting it to the intersection
-				// of "(*it)->getConflictClause()" and "assumptions".
-				ok = false;
-				break;
+				printf("c Switched to VSIDS.\n");
+				fflush(stdout);
 			}
-
-    if (!ok) return l_False;
-
-		solves++;
-
-    max_learnts               = nClauses() * learntsize_factor;
-    learntsize_adjust_confl   = learntsize_adjust_start_confl;
-    learntsize_adjust_cnt     = (int)learntsize_adjust_confl;
-    lbool   status            = l_Undef;
-
-    if (verbosity >= 1){
-        printf("c ============================[ Search Statistics ]==============================\n");
-        printf("c | Conflicts |          ORIGINAL         |          LEARNT          | Progress |\n");
-        printf("c |           |    Vars  Clauses Literals |    Limit  Clauses Lit/Cl |          |\n");
-        printf("c ===============================================================================\n");
-    }
-
-    add_tmp.clear();
-
-    VSIDS = true;
-    int init = 10000;
-    while (status == l_Undef && init > 0 /*&& withinBudget()*/)
-       status = search(assumptions, init);
-    VSIDS = false;
-
-    // Search:
-    int curr_restarts = 0;
-    while (status == l_Undef /*&& withinBudget()*/){
-        if (VSIDS){
-            int weighted = INT32_MAX;
-            status = search(assumptions, weighted);
-        }else{
-            int nof_conflicts = luby(restart_inc, curr_restarts) * restart_first;
-            curr_restarts++;
-            status = search(assumptions, nof_conflicts);
-        }
-        if (!VSIDS && switch_mode){
-            VSIDS = true;
-            printf("c Switched to VSIDS.\n");
-            fflush(stdout);
-            picked.clear();
-            conflicted.clear();
-            almost_conflicted.clear();
+			picked.clear();
+			conflicted.clear();
+			almost_conflicted.clear();
 #ifdef ANTI_EXPLORATION
-            canceled.clear();
+			canceled.clear();
 #endif
-        }
-    }
-
-    if (verbosity >= 1)
-        printf("c ===============================================================================\n");
-
-#ifdef BIN_DRUP
-    if (drup_file && status == l_False) binDRUP_flush(drup_file);
+		}
 #endif
+	}
 
-    if (status == l_True){
-        // Extend & copy model:
-        model.growTo(nVars());
-        for (int i = 0; i < nVars(); i++) model[i] = value(i);
-    }else if (status == l_False && conflict.size() == 0)
-        ok = false;
+	if (verbosity >= 1)
+		printf("c =========================================================================================================\n");
 
-    cancelUntil(0);
-    return status;
+	if (status == l_True){
+		// Extend & copy model:
+		model.growTo(nVars());
+		for (int i = 0; i < nVars(); i++) model[i] = value(i);
+	}else if (status == l_False && conflict.size() == 0)
+		ok = false;
+
+	cancelUntil(0);
+
+	return status;
 }
 
 //=================================================================================================
@@ -1543,21 +1868,31 @@ void Solver::relocAll(ClauseAllocator& to)
 
     // All learnt:
     //
+#ifdef GLUCOSE3
+    for (int i = 0; i < learnts_local.size(); i++)
+        ca.reloc(learnts_local[i], to);
+#else
     for (int i = 0; i < learnts_core.size(); i++)
         ca.reloc(learnts_core[i], to);
     for (int i = 0; i < learnts_tier2.size(); i++)
         ca.reloc(learnts_tier2[i], to);
     for (int i = 0; i < learnts_local.size(); i++)
         ca.reloc(learnts_local[i], to);
+#endif
 
     // All original:
     //
+#ifdef GLUCOSE3
+    for (int i = 0; i < clauses.size(); i++)
+        ca.reloc(clauses[i], to);
+#else
     int i, j;
     for (i = j = 0; i < clauses.size(); i++)
         if (ca[clauses[i]].mark() != 1){
             ca.reloc(clauses[i], to);
             clauses[j++] = clauses[i]; }
     clauses.shrink(i - j);
+#endif
 }
 
 void Solver::garbageCollect()
