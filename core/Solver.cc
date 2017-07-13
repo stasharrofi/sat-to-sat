@@ -198,7 +198,14 @@ Solver::Solver() :
     // Model printing options:
   , modelPrintingMethod(opt_printing_method)
   , showExternalVariables(opt_show_external_vars)
-{}
+{
+#ifdef GLUCOSE3
+	lbdQueue.initSize(sizeLBDQueue);
+	trailQueue.initSize(sizeTrailQueue);
+	sumLBD = 0;
+	nbclausesbeforereduce = firstReduceDB;
+#endif
+}
 
 Solver::Solver(Solver *from) :
 
@@ -309,6 +316,13 @@ Solver::Solver(Solver *from) :
   , showExternalVariables(from->showExternalVariables)
 
 {
+#ifdef GLUCOSE3
+	lbdQueue.initSize(sizeLBDQueue);
+	trailQueue.initSize(sizeTrailQueue);
+	sumLBD = 0;
+	nbclausesbeforereduce = firstReduceDB;
+#endif
+
 	while (nVars() < from->nVars())
 		newVar();
 	for (auto it = from->propagators.cbegin(); it != from->propagators.cend(); it++)
@@ -1446,7 +1460,7 @@ lbool Solver::search(const vec<Lit> &assumptions, int &nof_conflicts)
 			// NO CONFLICT
 #ifdef GLUCOSE3
 			// Our dynamic restart, see the SAT09 competition compagnion paper
-			if ( lbdQueue.isvalid() && ((lbdQueue.getavg()*K) > (sumLBD / conflictsRestarts))) {
+			if (lbdQueue.isvalid() && ((lbdQueue.getavg()*K*conflictsRestarts) > sumLBD)) {
 				lbdQueue.fastclear();
 				progress_estimate = progressEstimate();
 				int bt = 0;

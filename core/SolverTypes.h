@@ -30,7 +30,7 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #include "mtl/Map.h"
 #include "mtl/Alloc.h"
 
-#define GLUCOSE3
+//#define GLUCOSE3
 
 namespace Minisat {
 
@@ -148,11 +148,7 @@ class Clause {
     Clause(const V& ps, bool use_extra, bool learnt) {
         header.mark      = 0;
         header.learnt    = learnt;
-#ifdef GLUCOSE3
-        header.has_extra = use_extra;
-#else
         header.has_extra = learnt | use_extra;
-#endif
         header.reloced   = 0;
         header.size      = ps.size();
         header.lbd       = 0;
